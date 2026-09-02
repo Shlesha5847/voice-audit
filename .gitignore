@@ -73,3 +73,6 @@ Desktop.ini
 *.pem
 *.key
 *.cert
+
+# Documentation & Pipeline Notes
+PIPELINE/
