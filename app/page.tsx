@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 
 const TENANTS = [
   { id: 'bank_1', name: 'First National Bank (bank_1)' },
@@ -16,8 +17,10 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [tenantCalls, setTenantCalls] = useState<any[]>([]);
   const [loadingCalls, setLoadingCalls] = useState<boolean>(false);
+  const [rubrics, setRubrics] = useState<any[]>([]);
+  const [selectedRubricId, setSelectedRubricId] = useState<string>('');
 
-  // Fetch calls whenever active tenant changes
+  // Fetch calls & rubrics whenever active tenant changes
   const fetchTenantCalls = async (selectedTenant: string) => {
     try {
       setLoadingCalls(true);
@@ -33,8 +36,26 @@ export default function HomePage() {
     }
   };
 
+  const fetchRubrics = async (selectedTenant: string) => {
+    try {
+      const res = await fetch(`/api/rubrics?tenant_id=${selectedTenant}`);
+      const data = await res.json();
+      if (res.ok) {
+        setRubrics(data.rubrics || []);
+        if (data.rubrics?.length > 0) {
+          setSelectedRubricId(data.rubrics[0].id);
+        } else {
+          setSelectedRubricId('');
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   useEffect(() => {
     fetchTenantCalls(tenantId);
+    fetchRubrics(tenantId);
     setResult(null);
   }, [tenantId]);
 
@@ -73,7 +94,7 @@ export default function HomePage() {
       if (!transcribeRes.ok) throw new Error(transcribeData.error || 'Transcription failed');
       const transcript = transcribeData.transcript;
 
-      // 3. Score transcript with Tenant ID
+      // 3. Score transcript with Tenant ID and optional Rubric ID
       setStatus('Scoring with AI & Saving to DB...');
       const scoreRes = await fetch('/api/score', {
         method: 'POST',
@@ -82,6 +103,7 @@ export default function HomePage() {
           audio_url: audioUrl,
           transcript,
           tenant_id: tenantId,
+          rubric_id: selectedRubricId || null,
         }),
       });
       const scoreData = await scoreRes.json();
@@ -106,8 +128,35 @@ export default function HomePage() {
   };
 
   return (
-    <div style={{ maxWidth: 800, margin: '40px auto', padding: 24, fontFamily: 'sans-serif' }}>
-      <h2>Call Review & Multi-Tenant Audit</h2>
+    <div style={{ maxWidth: 840, margin: '40px auto', padding: 24, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      {/* Top Header & Navigation */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, paddingBottom: 16, borderBottom: '1px solid #e5e7eb' }}>
+        <div>
+          <h2 style={{ fontSize: 24, fontWeight: 700, margin: 0, color: '#111827' }}>Call Review & Multi-Tenant Audit</h2>
+          <p style={{ margin: '4px 0 0', fontSize: 14, color: '#6b7280' }}>
+            Upload and audit customer service & sales calls with AI scoring.
+          </p>
+        </div>
+        <div>
+          <Link
+            href="/rubrics"
+            style={{
+              padding: '8px 16px',
+              fontSize: 14,
+              fontWeight: 600,
+              borderRadius: 6,
+              background: '#2563eb',
+              color: '#fff',
+              textDecoration: 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            📋 Manage Rubrics
+          </Link>
+        </div>
+      </div>
 
       {/* Tenant Selector */}
       <div style={{ marginBottom: 20, padding: 14, background: '#f8f9fa', borderRadius: 8, border: '1px solid #ddd' }}>
@@ -127,6 +176,39 @@ export default function HomePage() {
         <span style={{ marginLeft: 12, fontSize: 13, color: '#666' }}>
           (Data is strictly isolated to <code>{tenantId}</code>)
         </span>
+      </div>
+
+      {/* Rubric Selector */}
+      <div style={{ marginBottom: 20, padding: 14, background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <label style={{ fontWeight: 600, fontSize: 14, color: '#334155' }}>
+            Select Scoring Rubric:
+          </label>
+          <Link href="/rubrics" style={{ fontSize: 13, color: '#2563eb', textDecoration: 'none' }}>
+            + Create New Rubric
+          </Link>
+        </div>
+        {rubrics.length === 0 ? (
+          <div style={{ fontSize: 13, color: '#64748b' }}>
+            No custom rubrics found for this tenant. Default QA standard rubric will be used.{' '}
+            <Link href="/rubrics" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+              Create a custom rubric here
+            </Link>.
+          </div>
+        ) : (
+          <select
+            value={selectedRubricId}
+            onChange={(e) => setSelectedRubricId(e.target.value)}
+            disabled={loading}
+            style={{ width: '100%', padding: '8px 12px', fontSize: 14, borderRadius: 6, border: '1px solid #cbd5e1', background: '#fff' }}
+          >
+            {rubrics.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name || r.title} ({r.criteria?.length || 0} criteria: {r.criteria?.map((c: any) => `${c.name} ${c.weight}%`).join(', ')})
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* File input */}

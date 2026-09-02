@@ -28,6 +28,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Check if a specific rubric is selected and load its criteria
+    let rubricPromptExtension = '';
+    if (rubric_id) {
+      const { data: rubricRecord } = await supabase
+        .from('rubrics')
+        .select('*')
+        .eq('id', rubric_id)
+        .single();
+
+      if (rubricRecord?.config?.criteria && Array.isArray(rubricRecord.config.criteria)) {
+        const criteriaList = rubricRecord.config.criteria
+          .map((c: any) => `- "${c.name}" (Weight: ${c.weight}%)`)
+          .join('\n');
+        rubricPromptExtension = `\nEvaluate the call against these specific criteria and their weights:\n${criteriaList}\nEnsure each evaluated criterion name matches the rubric criterion name.`;
+      }
+    }
+
     const groqApiKey = process.env.GROQ_API_KEY;
 
     let scoringResult: any;
@@ -42,7 +59,7 @@ export async function POST(req: NextRequest) {
 
       // 2. Call Groq API for QA Scoring
       const systemPrompt = `You are an expert QA auditor for customer support, sales, and product demo calls.
-Analyze the provided transcript and evaluate it against standard quality assurance criteria.
+Analyze the provided transcript and evaluate it against quality assurance criteria.${rubricPromptExtension}
 
 You MUST return a valid JSON object matching this exact structure:
 {
