@@ -1,37 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 
-// GET /api/calls?tenant_id=bank_1  (or Header: x-tenant-id: bank_1)
+// GET /api/calls?tenantId=bank_1
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-
-    // Read tenantId from query params OR headers
     const tenantId =
-      searchParams.get('tenant_id') ||
       searchParams.get('tenantId') ||
+      searchParams.get('tenant_id') ||
       req.headers.get('x-tenant-id');
 
-    // Strict guard: Never execute a query without tenant_id
     if (!tenantId) {
       return NextResponse.json(
-        { error: 'tenant_id is required in query params or x-tenant-id header' },
+        { error: 'tenantId is required in query params or x-tenant-id header' },
         { status: 400 }
       );
     }
 
-    // SELECT with mandatory tenant_id filter
-    const { data: calls, error } = await supabase
+    // Fetch calls and joined scores for tenant
+    const { data: calls, error: callsError } = await supabase
       .from('calls')
       .select(`
         id,
         tenant_id,
         audio_url,
-        transcript,
         created_at,
         scores (
           id,
-          tenant_id,
+          rubric_id,
           result,
           created_at
         )
@@ -39,15 +35,38 @@ export async function GET(req: NextRequest) {
       .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (callsError) {
+      return NextResponse.json({ error: callsError.message }, { status: 500 });
     }
 
-    return NextResponse.json({
-      tenant_id: tenantId,
-      total: calls?.length || 0,
-      calls: calls || [],
+    // Fetch rubrics to attach human-readable title
+    const { data: rubrics } = await supabase
+      .from('rubrics')
+      .select('id, title')
+      .eq('tenant_id', tenantId);
+
+    const rubricMap = new Map((rubrics || []).map((r) => [r.id, r.title]));
+
+    // Format response matching the required structure
+    const formattedCalls = (calls || []).map((call) => {
+      const latestScore = Array.isArray(call.scores) && call.scores.length > 0
+        ? call.scores[0]
+        : null;
+
+      const rubricId = latestScore?.rubric_id || null;
+      const rubricTitle = rubricId ? rubricMap.get(rubricId) || 'Custom Rubric' : 'Default QA Rubric';
+
+      return {
+        call_id: call.id,
+        audio_url: call.audio_url || null,
+        created_at: call.created_at,
+        final_score: latestScore?.result?.final_score ?? null,
+        rubric_id: rubricId,
+        rubric_title: rubricTitle,
+      };
     });
+
+    return NextResponse.json(formattedCalls);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to fetch calls';
     return NextResponse.json({ error: message }, { status: 500 });

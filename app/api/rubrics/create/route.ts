@@ -19,12 +19,36 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'criteria array is required' }, { status: 400 });
     }
 
+    // Validate and sanitize criteria
+    const sanitizedCriteria = criteria.map((c: any) => ({
+      name: String(c.name || '').trim(),
+      weight: Number(c.weight) || 0,
+    }));
+
+    for (const c of sanitizedCriteria) {
+      if (!c.name) {
+        return NextResponse.json({ error: 'Each criterion must have a non-empty name' }, { status: 400 });
+      }
+      if (c.weight < 0) {
+        return NextResponse.json({ error: 'Criterion weight cannot be negative' }, { status: 400 });
+      }
+    }
+
+    // Strict validation: Total weight must equal 100%
+    const totalWeight = sanitizedCriteria.reduce((sum, c) => sum + c.weight, 0);
+    if (totalWeight !== 100) {
+      return NextResponse.json(
+        { error: `Total criteria weight must equal 100%. Current total: ${totalWeight}%` },
+        { status: 400 }
+      );
+    }
+
     const { data, error } = await supabase
       .from('rubrics')
       .insert({
         tenant_id: tenantId,
         title,
-        config: { criteria },
+        config: { criteria: sanitizedCriteria },
       })
       .select()
       .single();

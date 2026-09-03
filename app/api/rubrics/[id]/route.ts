@@ -63,6 +63,20 @@ export async function PUT(
       if (!c.name) {
         return NextResponse.json({ error: 'Criterion name cannot be empty' }, { status: 400 });
       }
+      if (c.weight < 0) {
+        return NextResponse.json({ error: 'Criterion weight cannot be negative' }, { status: 400 });
+      }
+    }
+
+    const totalWeight = sanitizedCriteria.reduce(
+      (sum: number, c: { name: string; weight: number }) => sum + c.weight,
+      0
+    );
+    if (totalWeight !== 100) {
+      return NextResponse.json(
+        { error: `Total criteria weight must equal 100%. Current total: ${totalWeight}%` },
+        { status: 400 }
+      );
     }
 
     const updatePayload: Record<string, any> = {

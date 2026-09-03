@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 
-// POST /api/rubrics/update
+// POST or PUT /api/rubrics/update
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -25,12 +25,36 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'criteria array is required' }, { status: 400 });
     }
 
+    // Validate and sanitize criteria
+    const sanitizedCriteria = criteria.map((c: any) => ({
+      name: String(c.name || '').trim(),
+      weight: Number(c.weight) || 0,
+    }));
+
+    for (const c of sanitizedCriteria) {
+      if (!c.name) {
+        return NextResponse.json({ error: 'Each criterion must have a non-empty name' }, { status: 400 });
+      }
+      if (c.weight < 0) {
+        return NextResponse.json({ error: 'Criterion weight cannot be negative' }, { status: 400 });
+      }
+    }
+
+    // Strict validation: Total weight must equal 100%
+    const totalWeight = sanitizedCriteria.reduce((sum, c) => sum + c.weight, 0);
+    if (totalWeight !== 100) {
+      return NextResponse.json(
+        { error: `Total criteria weight must equal 100%. Current total: ${totalWeight}%` },
+        { status: 400 }
+      );
+    }
+
     // UPDATE with strict tenant_id and rubric_id filters
     const { data: updatedRubric, error } = await supabase
       .from('rubrics')
       .update({
         title,
-        config: { criteria },
+        config: { criteria: sanitizedCriteria },
       })
       .eq('id', rubricId)
       .eq('tenant_id', tenantId)

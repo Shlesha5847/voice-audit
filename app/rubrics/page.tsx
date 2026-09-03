@@ -154,6 +154,13 @@ export default function RubricsPage() {
       return;
     }
 
+    // Strict validation: Reject save if total weight is not 100%
+    const currentTotalWeight = filteredCriteria.reduce((sum, c) => sum + (Number(c.weight) || 0), 0);
+    if (currentTotalWeight !== 100) {
+      setError(`Total criteria weight must equal exactly 100%. Current total is ${currentTotalWeight}%. Please adjust weights before saving.`);
+      return;
+    }
+
     try {
       setSaving(true);
       setError(null);
