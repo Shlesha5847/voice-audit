@@ -6,7 +6,7 @@ Designed for quality assurance trainers, compliance officers, and sales managers
 
 ---
 
-## 🚀 Key Features
+##  Key Features
 
 * **Multi-Tenant Isolation**: Complete bank-level data isolation (e.g. `bank_1` vs `bank_2`).
 * **Cloud Audio Storage**: Direct MP3/WAV uploads to Supabase Storage with streaming URLs.
@@ -18,7 +18,7 @@ Designed for quality assurance trainers, compliance officers, and sales managers
 
 ---
 
-## 🛠 Tech Stack
+##  Tech Stack
 
 * **Framework**: [Next.js 16](https://nextjs.org/) (App Router, Turbopack, React 19)
 * **Language**: [TypeScript](https://www.typescriptlang.org/)
@@ -28,7 +28,7 @@ Designed for quality assurance trainers, compliance officers, and sales managers
 
 ---
 
-## ⚙️ Getting Started
+##  Getting Started
 
 ### 1. Clone & Install Dependencies
 
@@ -59,7 +59,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 📋 Application Pages
+##  Application Pages
 
 * **`/`** — Call Reviews Dashboard (Call list, score badges, "+ Audit New Call" modal).
 * **`/calls/[id]`** — Call Details (Interactive audio player, final score, criteria breakdown with clickable timestamp seek, and dialogue transcript).
@@ -67,7 +67,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 🔌 Core API Routes
+##  Core API Routes
 
 | Route | Method | Description |
 | :--- | :---: | :--- |
@@ -83,7 +83,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 🚢 Deployment to Vercel
+##  Deployment to Vercel
 
 1. Push your repository to GitHub.
 2. Import the repository into **[Vercel](https://vercel.com/)**.
