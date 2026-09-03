@@ -26,6 +26,29 @@ const TENANTS = [
   { id: 'bank_2', name: 'Apex Horizon Bank (bank_2)' },
 ];
 
+const SAMPLE_TRANSCRIPTS = [
+  {
+    label: 'Sample: Fee Dispute Resolution (High QA)',
+    text: `[00:00] Agent: Thank you for calling First National Bank, my name is Sarah. May I please have your full name and account number?
+[00:07] Customer: Hi Sarah, this is John Doe, account ending in 4821.
+[00:12] Agent: Thank you Mr. Doe, I have verified your account details. How can I assist you today?
+[00:18] Customer: I noticed an unfamiliar fee of $25 on my statement last Tuesday.
+[00:23] Agent: I completely understand how concerning unexpected charges can be. Let me look into that transaction right away for you.
+[00:32] Agent: I see that was an automated monthly maintenance fee. Since you maintain a direct deposit with us, I have processed an immediate full waiver of the $25 fee.
+[00:44] Customer: That is wonderful news, thank you so much!
+[00:48] Agent: You are very welcome! Is there anything else I can help you with today? Thank you for banking with First National Bank, and have a wonderful day.`,
+  },
+  {
+    label: 'Sample: Abrupt & Incomplete Call (Low QA)',
+    text: `[00:00] Agent: Yeah, what do you need?
+[00:05] Customer: Hi, I wanted to know my current account balance.
+[00:10] Agent: Your balance is $420.
+[00:14] Customer: Okay, and when is my next payment due?
+[00:18] Agent: Next Tuesday.
+[00:21] Customer: Great, thanks...`,
+  },
+];
+
 export default function DashboardPage() {
   const router = useRouter();
   const [tenantId, setTenantId] = useState<string>('bank_1');
@@ -36,7 +59,9 @@ export default function DashboardPage() {
 
   // New Audit Modal State
   const [showModal, setShowModal] = useState<boolean>(false);
+  const [inputMode, setInputMode] = useState<'audio' | 'transcript'>('audio');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [manualTranscript, setManualTranscript] = useState<string>('');
   const [selectedRubricId, setSelectedRubricId] = useState<string>('');
   const [auditStep, setAuditStep] = useState<string>('');
   const [isAuditing, setIsAuditing] = useState<boolean>(false);
@@ -77,62 +102,94 @@ export default function DashboardPage() {
     loadTenantData(tenantId);
   }, [tenantId]);
 
-  // Run End-to-End Audit Pipeline
+  // Run End-to-End Audit Pipeline (Supports Audio & Manual Transcript with Retry)
   const handleRunAudit = async () => {
-    if (!selectedFile) {
-      setAuditError('Please select an audio file (MP3/WAV)');
-      return;
-    }
-
     try {
       setIsAuditing(true);
       setAuditError(null);
 
-      // Step 1: Upload to Supabase Storage
-      setAuditStep('Uploading audio to secure storage...');
-      const formData = new FormData();
-      formData.append('file', selectedFile);
+      let finalAudioUrl: string | null = null;
+      let finalTranscript: any = null;
 
-      const uploadRes = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-      const uploadData = await uploadRes.json();
-      if (!uploadRes.ok) throw new Error(uploadData.error || 'Audio upload failed');
-      const audioUrl = uploadData.audio_url;
+      if (inputMode === 'audio') {
+        if (!selectedFile) {
+          throw new Error('Please select an audio file (MP3/WAV)');
+        }
 
-      // Step 2: Transcribe via Deepgram Nova-3
-      setAuditStep('Transcribing speech with timestamps (Deepgram)...');
-      const transcribeRes = await fetch('/api/transcribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audio_url: audioUrl,
-          tenant_id: tenantId,
-        }),
-      });
-      const transcribeData = await transcribeRes.json();
-      if (!transcribeRes.ok) throw new Error(transcribeData.error || 'Transcription failed');
-      const transcript = transcribeData.transcript;
+        // Step 1: Upload to Supabase Storage
+        setAuditStep('1/3 Uploading audio to secure storage...');
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+
+        const uploadRes = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        const uploadData = await uploadRes.json();
+        if (!uploadRes.ok) throw new Error(uploadData.error || 'Audio upload failed');
+        finalAudioUrl = uploadData.audio_url;
+
+        // Step 2: Transcribe via Deepgram Nova-3
+        setAuditStep('2/3 Transcribing speech with timestamps (Deepgram)...');
+        const transcribeRes = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            audio_url: finalAudioUrl,
+            tenant_id: tenantId,
+          }),
+        });
+        const transcribeData = await transcribeRes.json();
+        if (!transcribeRes.ok) {
+          throw new Error(
+            `${transcribeData.error || 'Transcription failed'}. You can retry or switch to manual transcript.`
+          );
+        }
+        finalTranscript = transcribeData.transcript;
+      } else {
+        // Manual Transcript mode
+        if (!manualTranscript.trim()) {
+          throw new Error('Please enter or paste a call transcript.');
+        }
+
+        setAuditStep('Formatting manual transcript...');
+        // Convert text lines to segments if entered with timestamps [00:00]
+        const lines = manualTranscript.trim().split('\n').filter((l) => l.trim().length > 0);
+        finalTranscript = lines.map((line) => {
+          const match = line.match(/^\[(\d{2}:\d{2})\]\s*(?:(Agent|Customer|Speaker\s*\d+):)?\s*(.*)$/i);
+          if (match) {
+            return {
+              time: match[1],
+              speaker: match[2] || 'Speaker',
+              text: match[3] || line,
+            };
+          }
+          return {
+            time: '00:00',
+            text: line,
+          };
+        });
+      }
 
       // Step 3: LLM Judge Evaluation with selected rubric
-      setAuditStep('Evaluating call quality against rubric (LLM Judge)...');
+      setAuditStep('3/3 Evaluating call quality against rubric (LLM Judge)...');
       const scoreRes = await fetch('/api/score', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tenantId,
-          audio_url: audioUrl,
-          transcript,
+          audio_url: finalAudioUrl,
+          transcript: finalTranscript,
           rubric_id: selectedRubricId || null,
         }),
       });
       const scoreData = await scoreRes.json();
       if (!scoreRes.ok) throw new Error(scoreData.error || 'Scoring evaluation failed');
 
-      // Step 4: Success - Navigate to Call Detail Page
+      // Success - Navigate to Call Detail Page
       setShowModal(false);
       setSelectedFile(null);
+      setManualTranscript('');
       setIsAuditing(false);
       router.push(`/calls/${scoreData.call_id}?tenantId=${tenantId}`);
     } catch (err: unknown) {
@@ -186,7 +243,10 @@ export default function DashboardPage() {
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <button
-            onClick={() => setShowModal(true)}
+            onClick={() => {
+              setAuditError(null);
+              setShowModal(true);
+            }}
             style={{
               padding: '8px 16px',
               fontSize: 14,
@@ -224,7 +284,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Tenant Selector */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, padding: '12px 16px', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, padding: '12px 16px', background: '#fff', borderRadius: 8, border: '1px solid #e2e8f0', boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <label style={{ fontWeight: 600, fontSize: 14, color: '#334155' }}>Active Bank / Tenant:</label>
           <select
@@ -257,13 +317,16 @@ export default function DashboardPage() {
         <div style={{ padding: 48, textAlign: 'center', color: '#6b7280' }}>Loading calls for {tenantId}...</div>
       ) : calls.length === 0 ? (
         /* Empty State */
-        <div style={{ padding: 48, textAlign: 'center', background: '#f9fafb', borderRadius: 8, border: '1px dashed #d1d5db' }}>
+        <div style={{ padding: 48, textAlign: 'center', background: '#fff', borderRadius: 8, border: '1px dashed #cbd5e1' }}>
           <h3 style={{ margin: '0 0 8px', fontSize: 18, color: '#374151' }}>No calls yet</h3>
           <p style={{ margin: '0 0 16px', color: '#6b7280', fontSize: 14 }}>
             There are no audited calls recorded for {tenantId} yet.
           </p>
           <button
-            onClick={() => setShowModal(true)}
+            onClick={() => {
+              setAuditError(null);
+              setShowModal(true);
+            }}
             style={{
               padding: '8px 16px',
               fontSize: 14,
@@ -295,7 +358,7 @@ export default function DashboardPage() {
                 textDecoration: 'none',
                 color: 'inherit',
                 transition: 'all 0.15s ease',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
               }}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -321,7 +384,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Modal: Upload & Audit New Call */}
+      {/* Modal: Audit Call (Supports Audio Upload & Manual Transcript + Retry Prompt) */}
       {showModal && (
         <div
           style={{
@@ -340,7 +403,7 @@ export default function DashboardPage() {
               background: '#fff',
               borderRadius: 12,
               padding: 24,
-              maxWidth: 500,
+              maxWidth: 540,
               width: '100%',
               boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
             }}
@@ -357,29 +420,134 @@ export default function DashboardPage() {
               </button>
             </div>
 
+            {/* Input Mode Selector Tabs */}
+            <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', marginBottom: 16 }}>
+              <button
+                type="button"
+                onClick={() => setInputMode('audio')}
+                disabled={isAuditing}
+                style={{
+                  flex: 1,
+                  padding: '8px 12px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  border: 'none',
+                  background: 'none',
+                  cursor: 'pointer',
+                  borderBottom: inputMode === 'audio' ? '2px solid #059669' : '2px solid transparent',
+                  color: inputMode === 'audio' ? '#059669' : '#64748b',
+                }}
+              >
+                🎧 Upload Audio File
+              </button>
+              <button
+                type="button"
+                onClick={() => setInputMode('transcript')}
+                disabled={isAuditing}
+                style={{
+                  flex: 1,
+                  padding: '8px 12px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  border: 'none',
+                  background: 'none',
+                  cursor: 'pointer',
+                  borderBottom: inputMode === 'transcript' ? '2px solid #059669' : '2px solid transparent',
+                  color: inputMode === 'transcript' ? '#059669' : '#64748b',
+                }}
+              >
+                📝 Manual Transcript
+              </button>
+            </div>
+
+            {/* Error Banner with Retry Prompt */}
             {auditError && (
-              <div style={{ padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', borderRadius: 6, marginBottom: 16, fontSize: 13 }}>
-                {auditError}
+              <div style={{ padding: '12px 14px', background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', borderRadius: 6, marginBottom: 16, fontSize: 13 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>Audit Error:</div>
+                <div style={{ marginBottom: 8 }}>{auditError}</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={handleRunAudit}
+                    style={{ padding: '4px 10px', fontSize: 12, fontWeight: 600, background: '#b91c1c', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}
+                  >
+                    🔄 Retry Audit
+                  </button>
+                  {inputMode === 'audio' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuditError(null);
+                        setInputMode('transcript');
+                      }}
+                      style={{ padding: '4px 10px', fontSize: 12, fontWeight: 600, background: '#fff', color: '#b91c1c', border: '1px solid #b91c1c', borderRadius: 4, cursor: 'pointer' }}
+                    >
+                      ✏️ Switch to Manual Transcript
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
-            {/* 1. File Upload Picker */}
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
-                1. Select Audio Recording (MP3 / WAV):
-              </label>
-              <input
-                type="file"
-                accept="audio/*"
-                disabled={isAuditing}
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    setSelectedFile(e.target.files[0]);
-                  }
-                }}
-                style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #d1d5db', borderRadius: 6 }}
-              />
-            </div>
+            {/* Mode 1: File Upload */}
+            {inputMode === 'audio' ? (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
+                  1. Select Audio Recording (MP3 / WAV):
+                </label>
+                <input
+                  type="file"
+                  accept="audio/*"
+                  disabled={isAuditing}
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      setSelectedFile(e.target.files[0]);
+                    }
+                  }}
+                  style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #d1d5db', borderRadius: 6 }}
+                />
+              </div>
+            ) : (
+              /* Mode 2: Manual Transcript Input */
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <label style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>
+                    1. Enter Call Transcript (with [MM:SS] timestamps):
+                  </label>
+                </div>
+                {/* Sample Fill Helper */}
+                <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                  {SAMPLE_TRANSCRIPTS.map((st, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      disabled={isAuditing}
+                      onClick={() => setManualTranscript(st.text)}
+                      style={{
+                        padding: '3px 8px',
+                        fontSize: 11,
+                        borderRadius: 4,
+                        border: '1px solid #cbd5e1',
+                        background: '#f8fafc',
+                        cursor: 'pointer',
+                        color: '#475569',
+                      }}
+                    >
+                      Fill {i === 0 ? 'High QA Sample' : 'Low QA Sample'}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  rows={6}
+                  value={manualTranscript}
+                  onChange={(e) => setManualTranscript(e.target.value)}
+                  disabled={isAuditing}
+                  placeholder={`[00:00] Agent: Thank you for calling...
+[00:05] Customer: Hi, I need help with...`}
+                  style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #d1d5db', borderRadius: 6, fontFamily: 'monospace' }}
+                />
+              </div>
+            )}
 
             {/* 2. Select Rubric */}
             <div style={{ marginBottom: 20 }}>
@@ -423,7 +591,7 @@ export default function DashboardPage() {
               <button
                 type="button"
                 onClick={handleRunAudit}
-                disabled={isAuditing || !selectedFile}
+                disabled={isAuditing || (inputMode === 'audio' ? !selectedFile : !manualTranscript.trim())}
                 style={{
                   padding: '8px 18px',
                   fontSize: 14,
